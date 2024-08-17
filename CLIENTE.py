@@ -2,6 +2,7 @@ import socket
 import threading
 import sys
 import os
+import time
 
 host_servidor = '127.0.0.1'
 porta_servidor = 5000
@@ -13,6 +14,7 @@ nome = input("Escreva seu nome: ")
 soquete_servidor.send(nome.encode('utf-8'))
 
 conversas = {}
+conversas_chat_geral = []
 conversa_atual = None
 portas_cache = {}
 lock = threading.Lock()
@@ -51,7 +53,6 @@ def receber_conexoes():
     try:
         while True:
             conexao, endereco = soquete_local.accept()
-            print(f"Conexão recebida de {endereco}")
             threading.Thread(target=ouvir_mensagens, args=(conexao,), daemon=True).start()
     except Exception as e:
         print(f"Erro ao receber conexões: {e}")
@@ -59,17 +60,29 @@ def receber_conexoes():
         soquete_local.close()
 
 def ouvir_mensagens(conexao):
+    global remetente
     try:
         while True:
             mensagem = conexao.recv(1024).decode('utf-8')
             if mensagem:
-                remetente, conteudo = mensagem.split(": ", 1)
-                with lock:
-                    if remetente not in conversas:
-                        conversas[remetente] = []
-                    conversas[remetente].append(f"{remetente}: {conteudo}")
-                    if conversa_atual == remetente:
-                        atualizar_conversa_atual()
+                try:
+                    flag, remetente, conteudo = mensagem.split(": ", 2)
+                except ValueError:
+                    print("Formato de mensagem inválido recebido.")
+                    continue
+
+                if flag == "G":
+                    with lock:
+                        conversas_chat_geral.append(f"{remetente} (Chat Geral): {conteudo}")
+                        if conversa_atual == "Chat_Geral":
+                            atualizar_chat_geral()
+                else:
+                    with lock:
+                        if remetente not in conversas:
+                            conversas[remetente] = []
+                        conversas[remetente].append(f"{remetente}: {conteudo}")
+                        if conversa_atual == remetente:
+                            atualizar_conversa_atual()
     except Exception as e:
         print(f"Erro ao receber mensagem: {e}")
     finally:
@@ -93,7 +106,17 @@ def atualizar_porta_destinatario(destinatario):
         print(f"Erro ao atualizar porta do destinatário: {e}")
         return None
 
-def enviar_mensagem(destinatario, mensagem):
+def enviar_mensagem(destinatario, mensagem, chat_geral=False):
+    if chat_geral:
+        usuarios = obter_lista_usuarios()
+        for usuario in usuarios:
+            nome_cliente = usuario.split(":")[0]
+            if nome_cliente != nome:
+                enviar_mensagem_individual(nome_cliente, mensagem, flag="G")
+    else:
+        enviar_mensagem_individual(destinatario, mensagem)
+
+def enviar_mensagem_individual(destinatario, mensagem, flag="P"):
     while True:
         if destinatario in conexoes_persistentes:
             soquete_destinatario = conexoes_persistentes[destinatario]
@@ -113,11 +136,14 @@ def enviar_mensagem(destinatario, mensagem):
                 return
 
         try:
-            soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
+            soquete_destinatario.send(f"{flag}: {nome}: {mensagem}".encode('utf-8'))
             with lock:
-                if destinatario not in conversas:
-                    conversas[destinatario] = []
-                conversas[destinatario].append(f"Eu: {mensagem}")
+                if flag == "G":
+                    conversas_chat_geral.append(f"Eu (Chat Geral): {mensagem}")
+                else:
+                    if destinatario not in conversas:
+                        conversas[destinatario] = []
+                    conversas[destinatario].append(f"Eu: {mensagem}")
             break
         except Exception as e:
             print(f"Erro ao enviar mensagem para {destinatario}: {e}")
@@ -147,6 +173,12 @@ def atualizar_conversa_atual():
         else:
             print("Nenhuma mensagem ainda.")
 
+def atualizar_chat_geral():
+    limpar_console()
+    print("Chat Geral:")
+    for msg in conversas_chat_geral:
+        print(msg)
+
 def exibir_menu():
     while True:
         limpar_console()
@@ -164,9 +196,11 @@ def exibir_menu():
                 num_usuario_opcoes += 1
 
         atualizar_opcao = num_usuario_opcoes
-        sair_opcao = atualizar_opcao + 1
+        chat_geral_opcao = atualizar_opcao + 1
+        sair_opcao = chat_geral_opcao + 1
 
         opcoes.append((atualizar_opcao, "Atualizar"))
+        opcoes.append((chat_geral_opcao, "Chat Geral"))
         opcoes.append((sair_opcao, "Sair"))
 
         for num, descricao in opcoes:
@@ -182,6 +216,8 @@ def exibir_menu():
                     selecionar_conversa(nome_cliente)
                 elif opcao_selecionada == atualizar_opcao:
                     continue
+                elif opcao_selecionada == chat_geral_opcao:
+                    selecionar_conversa_chat_geral()
                 elif opcao_selecionada == sair_opcao:
                     soquete_servidor.close()
                     if soquete_local:
@@ -190,20 +226,29 @@ def exibir_menu():
                         conn.close()
                     sys.exit()
             else:
-                print("Opção inválida. Tente novamente.")
-        else:
-            print("Opção inválida. Tente novamente.")
+                print("Opção inválida.")
 
-def selecionar_conversa(destinatario):
+def selecionar_conversa(nome_cliente):
     global conversa_atual
-    conversa_atual = destinatario
-
+    conversa_atual = nome_cliente
+    atualizar_conversa_atual()
     while True:
-        atualizar_conversa_atual()
-        mensagem = input("\n")
-        if mensagem.upper() == 'SAIR':
+        mensagem = input("")
+        if mensagem.lower() == 'voltar':
             break
-        enviar_mensagem(destinatario, mensagem)
+        else:
+            enviar_mensagem(nome_cliente, mensagem)
+
+def selecionar_conversa_chat_geral():
+    global conversa_atual
+    conversa_atual = "Chat_Geral"
+    while True:
+        atualizar_chat_geral()
+        mensagem = input("")
+        if mensagem.lower() == 'voltar':
+            break
+        else:
+            enviar_mensagem(None, mensagem, chat_geral=True)
 
 if __name__ == "__main__":
     iniciar_soquete_local()
