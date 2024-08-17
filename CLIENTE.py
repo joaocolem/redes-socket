@@ -16,8 +16,6 @@ conversas = {}
 conversa_atual = None
 portas_cache = {}
 lock = threading.Lock()
-
-# Dicionário para armazenar conexões persistentes
 conexoes_persistentes = {}
 
 def limpar_console():
@@ -70,11 +68,13 @@ def ouvir_mensagens(conexao):
                     if remetente not in conversas:
                         conversas[remetente] = []
                     conversas[remetente].append(f"{remetente}: {conteudo}")
+                    # Atualiza a conversa atual se for o destinatário correto
+                    if conversa_atual == remetente:
+                        atualizar_conversa_atual()
     except Exception as e:
         print(f"Erro ao receber mensagem: {e}")
     finally:
         conexao.close()
-        # Remove a conexão persistente se o destinatário se desconectar
         if remetente in conexoes_persistentes:
             del conexoes_persistentes[remetente]
 
@@ -117,14 +117,12 @@ def enviar_mensagem(destinatario, mensagem):
 
     try:
         soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
-        # Armazena a mensagem enviada na conversa
         with lock:
             if destinatario not in conversas:
                 conversas[destinatario] = []
             conversas[destinatario].append(f"Eu: {mensagem}")
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
-        # Se falhar, tenta remover a conexão e reenvia
         if destinatario in conexoes_persistentes:
             conexoes_persistentes[destinatario].close()
             del conexoes_persistentes[destinatario]
@@ -139,52 +137,77 @@ def obter_lista_usuarios():
         print(f"Erro ao obter lista de usuários: {e}")
         return []
 
+def atualizar_conversa_atual():
+    if conversa_atual:
+        limpar_console()
+        print(f"Conversa com {conversa_atual}:")
+        if conversa_atual in conversas:
+            for msg in conversas[conversa_atual]:
+                print(msg)
+        else:
+            print("Nenhuma mensagem ainda.")
+
 def exibir_menu():
     while True:
         limpar_console()
         print("Selecione o destinatário para enviar a mensagem:\n")
+
         usuarios = obter_lista_usuarios()
-        if usuarios:
-            for idx, usuario in enumerate(usuarios, start=1):
-                nome_cliente = usuario.split(":")[0]
-                print(f"{idx} - {nome_cliente}")
-            print(f"{len(usuarios) + 1} - Atualizar")
-            print(f"{len(usuarios) + 2} - Sair")
-        else:
-            print("Nenhum outro usuário conectado.")
-            print("1 - Atualizar")
-            print("2 - Sair")
 
-        opcao = input("\nEscolha uma opção: ")
+        # Armazenar as opções de menu e números correspondentes
+        opcoes = []
+        num_usuario_opcoes = 1
 
-        if opcao.isdigit() and 1 <= int(opcao) <= len(usuarios):
-            selecionar_conversa(usuarios[int(opcao) - 1].split(":")[0])
-        elif opcao == str(len(usuarios) + 1):
-            continue
-        elif opcao == str(len(usuarios) + 2):
-            soquete_servidor.close()
-            if soquete_local:
-                soquete_local.close()
-            for conn in conexoes_persistentes.values():
-                conn.close()
-            sys.exit()
+        for usuario in usuarios:
+            nome_cliente = usuario.split(":")[0]
+            if nome_cliente != nome:
+                opcoes.append((num_usuario_opcoes, nome_cliente))
+                num_usuario_opcoes += 1
+
+        # Adicionar as opções de Atualizar e Sair com números contínuos
+        atualizar_opcao = num_usuario_opcoes
+        sair_opcao = atualizar_opcao + 1
+
+        opcoes.append((atualizar_opcao, "Atualizar"))
+        opcoes.append((sair_opcao, "Sair"))
+
+        # Exibir opções de menu com números contínuos
+        for num, descricao in opcoes:
+            print(f"{num} - {descricao}")
+
+        opcao_selecionada = input("\nEscolha uma opção: ")
+
+        if opcao_selecionada.isdigit():
+            opcao_selecionada = int(opcao_selecionada)
+            if any(opcao_selecionada == num for num, _ in opcoes):
+                if opcao_selecionada < atualizar_opcao:
+                    # Selecionar usuário
+                    nome_cliente = next(descricao for num, descricao in opcoes if num == opcao_selecionada)
+                    selecionar_conversa(nome_cliente)
+                elif opcao_selecionada == atualizar_opcao:
+                    # Atualizar lista de usuários
+                    continue
+                elif opcao_selecionada == sair_opcao:
+                    # Fechar conexões e sair
+                    soquete_servidor.close()
+                    if soquete_local:
+                        soquete_local.close()
+                    for conn in conexoes_persistentes.values():
+                        conn.close()
+                    sys.exit()
+            else:
+                print("Opção inválida. Tente novamente.")
         else:
             print("Opção inválida. Tente novamente.")
+
 
 def selecionar_conversa(destinatario):
     global conversa_atual
     conversa_atual = destinatario
 
     while True:
-        limpar_console()
-        print(f"Conversa com {destinatario}:")
-        if destinatario in conversas:
-            for msg in conversas[destinatario]:
-                print(msg)
-        else:
-            print("Nenhuma mensagem ainda.")
-
-        mensagem = input("\nDigite sua mensagem (ou 'SAIR' para voltar ao menu): ")
+        atualizar_conversa_atual()
+        mensagem = input("\n")
         if mensagem.upper() == 'SAIR':
             break
         enviar_mensagem(destinatario, mensagem)
