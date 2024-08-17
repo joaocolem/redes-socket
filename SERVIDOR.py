@@ -29,7 +29,16 @@ def handle_client(conexao, endereco):
                 conexao.send(resposta.encode('utf-8'))
             else:
                 conexao.send("Destinatário não encontrado.".encode('utf-8'))
-        
+                
+        elif mensagem == "Solicitar todos IPs":
+            resposta = ""
+            for nome_cliente, (ip_cliente, porta_cliente) in clientes_conectados.items():
+                resposta += f"{nome_cliente}: {ip_cliente}:{porta_cliente}\n"
+            if resposta:
+                conexao.send(resposta.encode('utf-8'))
+            else:
+                conexao.send("Nenhum cliente conectado.".encode('utf-8'))
+            
     conexao.close()
     del clientes_conectados[nome]
     print(f'Cliente {nome} desconectado.')

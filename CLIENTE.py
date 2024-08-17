@@ -5,43 +5,63 @@ import sys
 host_servidor = '127.0.0.1'
 porta_servidor = 5000
 
-# Conectando ao servidor central
 soquete_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 soquete_servidor.connect((host_servidor, porta_servidor))
 
 nome = input("Escreva seu nome: ")
 soquete_servidor.send(nome.encode('utf-8'))
 
-# Dicionário para armazenar mensagens recebidas
 mensagens_recebidas = {}
 
-def ouvir_mensagens():
+def obter_porta_local():
+    soquete_servidor.send(f"Solicitar IP,{nome}".encode('utf-8'))
+    resposta = soquete_servidor.recv(1024).decode('utf-8')
+    if resposta:
+        b, porta_local = resposta.split(",")
+        return int(porta_local)
+    else:
+        raise Exception("Não foi possível obter a porta local.")
+
+def receber_conexoes():
+    soquete_ouvinte = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    porta_local = obter_porta_local()
+    soquete_ouvinte.bind((host_servidor, porta_local))
+    soquete_ouvinte.listen(5) 
+    while True:
+        conexao, endereco = soquete_ouvinte.accept()
+        threading.Thread(target=ouvir_mensagens, args=(conexao,)).start()
+
+def ouvir_mensagens(conexao):
     while True:
         try:
-            mensagem = soquete_servidor.recv(1024).decode('utf-8')
+            mensagem = conexao.recv(1024).decode('utf-8')
             if mensagem:
                 remetente, conteudo = mensagem.split(": ", 1)
                 if remetente not in mensagens_recebidas:
                     mensagens_recebidas[remetente] = []
                 mensagens_recebidas[remetente].append(conteudo)
-        except:
-            print("Conexão perdida com o servidor.")
+            else:
+                break
+        except Exception as e:
+            print(f"Erro ao receber mensagem: {e}")
             break
+    conexao.close()
 
 def enviar_mensagem(destinatario, mensagem):
     soquete_servidor.send(f"Solicitar IP,{destinatario}".encode('utf-8'))
     resposta = soquete_servidor.recv(1024).decode('utf-8')
-    print(resposta)
     
     if resposta == "Destinatário não encontrado.":
         print(resposta)
     else:
         ip_destinatario, porta_destinatario = resposta.split(",")
-        
-        soquete_destinatario = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        soquete_destinatario.connect((ip_destinatario, int(porta_destinatario)))
-        soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
-        soquete_destinatario.close()
+        try:
+            soquete_destinatario = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            soquete_destinatario.connect((ip_destinatario, int(porta_destinatario)))
+            soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
+            soquete_destinatario.close()
+        except Exception as e:
+            print(f"Erro ao enviar mensagem: {e}")
 
 def menu():
     while True:
@@ -70,5 +90,7 @@ def menu():
         else:
             print("Opção inválida.")
 
-threading.Thread(target=ouvir_mensagens, daemon=True).start()
+# Inicia o servidor de escuta em uma thread separada
+threading.Thread(target=receber_conexoes, daemon=True).start()
+
 menu()
