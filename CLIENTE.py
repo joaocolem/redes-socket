@@ -68,7 +68,6 @@ def ouvir_mensagens(conexao):
                     if remetente not in conversas:
                         conversas[remetente] = []
                     conversas[remetente].append(f"{remetente}: {conteudo}")
-                    # Atualiza a conversa atual se for o destinatário correto
                     if conversa_atual == remetente:
                         atualizar_conversa_atual()
     except Exception as e:
@@ -77,15 +76,12 @@ def ouvir_mensagens(conexao):
         conexao.close()
         if remetente in conexoes_persistentes:
             del conexoes_persistentes[remetente]
+        portas_cache.pop(remetente, None)
 
-def obter_porta_destinatario(destinatario):
-    if destinatario in portas_cache:
-        return portas_cache[destinatario]
-
+def atualizar_porta_destinatario(destinatario):
     try:
         soquete_servidor.send(f"Solicitar IP,{destinatario}".encode('utf-8'))
         resposta = soquete_servidor.recv(1024).decode('utf-8')
-
         if resposta == "Destinatário não encontrado.":
             print(resposta)
             return None
@@ -94,39 +90,43 @@ def obter_porta_destinatario(destinatario):
             portas_cache[destinatario] = (ip_destinatario, int(porta_destinatario))
             return ip_destinatario, int(porta_destinatario)
     except Exception as e:
-        print(f"Erro ao obter porta do destinatário: {e}")
+        print(f"Erro ao atualizar porta do destinatário: {e}")
         return None
 
 def enviar_mensagem(destinatario, mensagem):
-    if destinatario in conexoes_persistentes:
-        soquete_destinatario = conexoes_persistentes[destinatario]
-    else:
-        ip_porta = obter_porta_destinatario(destinatario)
-        if not ip_porta:
-            print(f"Não foi possível obter porta para {destinatario}")
-            return
-
-        ip_destinatario, porta_destinatario = ip_porta
-        try:
-            soquete_destinatario = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            soquete_destinatario.connect((ip_destinatario, porta_destinatario))
-            conexoes_persistentes[destinatario] = soquete_destinatario
-        except Exception as e:
-            print(f"Erro ao conectar ao destinatário: {e}")
-            return
-
-    try:
-        soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
-        with lock:
-            if destinatario not in conversas:
-                conversas[destinatario] = []
-            conversas[destinatario].append(f"Eu: {mensagem}")
-    except Exception as e:
-        print(f"Erro ao enviar mensagem: {e}")
+    while True:
         if destinatario in conexoes_persistentes:
-            conexoes_persistentes[destinatario].close()
-            del conexoes_persistentes[destinatario]
-        enviar_mensagem(destinatario, mensagem)
+            soquete_destinatario = conexoes_persistentes[destinatario]
+        else:
+            ip_porta = atualizar_porta_destinatario(destinatario)
+            if not ip_porta:
+                print(f"Não foi possível obter porta para {destinatario}")
+                return
+
+            ip_destinatario, porta_destinatario = ip_porta
+            try:
+                soquete_destinatario = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                soquete_destinatario.connect((ip_destinatario, porta_destinatario))
+                conexoes_persistentes[destinatario] = soquete_destinatario
+            except Exception as e:
+                print(f"Erro ao conectar ao destinatário: {e}")
+                return
+
+        try:
+            soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
+            with lock:
+                if destinatario not in conversas:
+                    conversas[destinatario] = []
+                conversas[destinatario].append(f"Eu: {mensagem}")
+            break
+        except Exception as e:
+            print(f"Erro ao enviar mensagem para {destinatario}: {e}")
+            if destinatario in conexoes_persistentes:
+                conexoes_persistentes[destinatario].close()
+                del conexoes_persistentes[destinatario]
+            ip_porta = atualizar_porta_destinatario(destinatario)
+            if not ip_porta:
+                break
 
 def obter_lista_usuarios():
     try:
@@ -154,7 +154,6 @@ def exibir_menu():
 
         usuarios = obter_lista_usuarios()
 
-        # Armazenar as opções de menu e números correspondentes
         opcoes = []
         num_usuario_opcoes = 1
 
@@ -164,14 +163,12 @@ def exibir_menu():
                 opcoes.append((num_usuario_opcoes, nome_cliente))
                 num_usuario_opcoes += 1
 
-        # Adicionar as opções de Atualizar e Sair com números contínuos
         atualizar_opcao = num_usuario_opcoes
         sair_opcao = atualizar_opcao + 1
 
         opcoes.append((atualizar_opcao, "Atualizar"))
         opcoes.append((sair_opcao, "Sair"))
 
-        # Exibir opções de menu com números contínuos
         for num, descricao in opcoes:
             print(f"{num} - {descricao}")
 
@@ -181,14 +178,11 @@ def exibir_menu():
             opcao_selecionada = int(opcao_selecionada)
             if any(opcao_selecionada == num for num, _ in opcoes):
                 if opcao_selecionada < atualizar_opcao:
-                    # Selecionar usuário
                     nome_cliente = next(descricao for num, descricao in opcoes if num == opcao_selecionada)
                     selecionar_conversa(nome_cliente)
                 elif opcao_selecionada == atualizar_opcao:
-                    # Atualizar lista de usuários
                     continue
                 elif opcao_selecionada == sair_opcao:
-                    # Fechar conexões e sair
                     soquete_servidor.close()
                     if soquete_local:
                         soquete_local.close()
@@ -199,7 +193,6 @@ def exibir_menu():
                 print("Opção inválida. Tente novamente.")
         else:
             print("Opção inválida. Tente novamente.")
-
 
 def selecionar_conversa(destinatario):
     global conversa_atual
