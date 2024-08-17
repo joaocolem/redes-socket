@@ -1,62 +1,74 @@
 import socket
-import json
-import hashlib
 import threading
+import sys
 
-host = '127.0.0.1'
-porta = 5000
-soquete = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-destino = (host, porta)
-soquete.connect(destino)
+host_servidor = '127.0.0.1'
+porta_servidor = 5000
+
+# Conectando ao servidor central
+soquete_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+soquete_servidor.connect((host_servidor, porta_servidor))
 
 nome = input("Escreva seu nome: ")
-soquete.send(nome.encode('utf-8'))
+soquete_servidor.send(nome.encode('utf-8'))
 
-conexoes_anteriores = {}
+# Dicionário para armazenar mensagens recebidas
+mensagens_recebidas = {}
 
-def calcular_hash(nome_destinatario):
-    return hashlib.sha256(nome_destinatario.encode('utf-8')).hexdigest()
-
-def receber_mensagens():
+def ouvir_mensagens():
     while True:
-        mensagem = soquete.recv(1024).decode('utf-8')
-        print(f"\nNova mensagem recebida: {mensagem}")
+        try:
+            mensagem = soquete_servidor.recv(1024).decode('utf-8')
+            if mensagem:
+                remetente, conteudo = mensagem.split(": ", 1)
+                if remetente not in mensagens_recebidas:
+                    mensagens_recebidas[remetente] = []
+                mensagens_recebidas[remetente].append(conteudo)
+        except:
+            print("Conexão perdida com o servidor.")
+            break
+
+def enviar_mensagem(destinatario, mensagem):
+    soquete_servidor.send(f"Solicitar IP,{destinatario}".encode('utf-8'))
+    resposta = soquete_servidor.recv(1024).decode('utf-8')
+    print(resposta)
+    
+    if resposta == "Destinatário não encontrado.":
+        print(resposta)
+    else:
+        ip_destinatario, porta_destinatario = resposta.split(",")
+        
+        soquete_destinatario = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        soquete_destinatario.connect((ip_destinatario, int(porta_destinatario)))
+        soquete_destinatario.send(f"{nome}: {mensagem}".encode('utf-8'))
+        soquete_destinatario.close()
 
 def menu():
-    print("\nMenu:")
-    print("1 - Enviar mensagem")
-    print("2 - Sair")
-
-threading.Thread(target=receber_mensagens, daemon=True).start()
-
-while True:
-    menu()
-    opcao = input("Escolha uma opção: ")
-
-    if opcao == "1":
-        destinatario = input("Digite o nome do destinatário: ")
-        hash_destinatario = calcular_hash(destinatario)
-
-        if hash_destinatario not in conexoes_anteriores:
-            soquete.send(f"Solicitar IP,{destinatario}".encode('utf-8'))
-            resposta = soquete.recv(1024).decode('utf-8')
-            if resposta == "Destinatário não encontrado.":
-                print(resposta)
+    while True:
+        print("\nMenu:")
+        print("1 - Enviar mensagem")
+        print("2 - Ver mensagens recebidas")
+        print("3 - Sair")
+        opcao = input("Escolha uma opção: ")
+        
+        if opcao == '1':
+            destinatario = input("Digite o nome do destinatário: ")
+            mensagem = input("Digite a mensagem: ")
+            enviar_mensagem(destinatario, mensagem)
+        elif opcao == '2':
+            if not mensagens_recebidas:
+                print("Nenhuma mensagem recebida.")
                 continue
-            else:
-                ip_destinatario, porta_destinatario = resposta.split(",")
-                conexoes_anteriores[hash_destinatario] = (ip_destinatario, int(porta_destinatario))
+            print("Mensagens recebidas:")
+            for remetente, mensagens in mensagens_recebidas.items():
+                print(f"\nDe {remetente}:")
+                for msg in mensagens:
+                    print(f"  {msg}")
+        elif opcao == '3':
+            soquete_servidor.close()
+            sys.exit()
+        else:
+            print("Opção inválida.")
 
-        mensagem = input("Escreva sua mensagem: ")
-        pacote = f"1,{hash_destinatario},{mensagem}"
-        soquete.send(pacote.encode('utf-8'))
-
-    elif opcao == "2":
-        soquete.send("3".encode('utf-8'))
-        print("Conexão encerrada.")
-        break
-
-    else:
-        print("Opção inválida. Tente novamente.")
-
-soquete.close()
+threading.Thread(target=ouvir_mensagens, daemon=True).start()
+menu()

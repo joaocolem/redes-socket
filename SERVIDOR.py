@@ -1,73 +1,39 @@
 import socket
 import threading
-import time
 
 host = '127.0.0.1'
 porta = 5000
-soquete = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-origem = (host, porta)
-soquete.bind(origem)
-soquete.listen(5)
+servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+servidor.bind((host, porta))
+servidor.listen(5)
 
 clientes_conectados = {}
 
-def verificar_clientes_periodicamente():
-    while True:
-        print("Verificando clientes conectados...")
-        for nome, info in list(clientes_conectados.items()):
-            try:
-                soquete_cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                soquete_cliente.connect((info['ip'], info['porta']))
-                soquete_cliente.close()
-            except:
-                print(f"Cliente {nome} desconectado.")
-                del clientes_conectados[nome]
-        time.sleep(30)  # Verifica a cada 30 segundos
-
-def service(conexao, cliente):
-    print('Conectado por', cliente)
+def handle_client(conexao, endereco):
+    print(f'Cliente conectado: {endereco}')
+    
     nome = conexao.recv(1024).decode('utf-8')
-    clientes_conectados[nome] = {'ip': cliente[0], 'porta': cliente[1]}
+    clientes_conectados[nome] = endereco
+    print(f'{nome} registrado com IP {endereco[0]} e porta {endereco[1]}')
 
     while True:
         mensagem = conexao.recv(1024).decode('utf-8')
         if not mensagem:
             break
-        print(f"Cliente {cliente[0]}:{cliente[1]} Enviou: {mensagem}")
-        codigo, destinatario_hash, conteudo = mensagem.split(",", 2)
-
-        if codigo == "1":
-            if destinatario_hash:
-                if destinatario_hash in clientes_conectados:
-                    ip_destinatario = clientes_conectados[destinatario_hash]['ip']
-                    porta_destinatario = clientes_conectados[destinatario_hash]['porta']
-                    soquete_cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    soquete_cliente.connect((ip_destinatario, porta_destinatario))
-                    soquete_cliente.send(f"{nome},{conteudo}".encode('utf-8'))
-                    soquete_cliente.close()
-                    conexao.send("Mensagem enviada ao destinatário.".encode('utf-8'))
-                else:
-                    conexao.send("Destinatário não encontrado.".encode('utf-8'))
+        
+        if mensagem.startswith("Solicitar IP,"):
+            nome_destinatario = mensagem.split(",")[1]
+            if nome_destinatario in clientes_conectados:
+                ip_destinatario, porta_destinatario = clientes_conectados[nome_destinatario]
+                resposta = f"{ip_destinatario},{porta_destinatario}"
+                conexao.send(resposta.encode('utf-8'))
             else:
-                for cliente_nome, info in clientes_conectados.items():
-                    if cliente_nome != nome:
-                        soquete_cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        soquete_cliente.connect((info['ip'], info['porta']))
-                        soquete_cliente.send(f"{nome},{conteudo}".encode('utf-8'))
-                        soquete_cliente.close()
-                conexao.send("Mensagem enviada para todos os clientes.".encode('utf-8'))
-
-        elif codigo == "3":
-            conexao.send("Conexão encerrada.".encode('utf-8'))
-            break
-
-    del clientes_conectados[nome]
+                conexao.send("Destinatário não encontrado.".encode('utf-8'))
+        
     conexao.close()
-
-# Inicia a thread para verificar clientes periodicamente
-threading.Thread(target=verificar_clientes_periodicamente, daemon=True).start()
+    del clientes_conectados[nome]
+    print(f'Cliente {nome} desconectado.')
 
 while True:
-    conexao, cliente = soquete.accept()
-    cliente_thread = threading.Thread(target=service, args=(conexao, cliente))
-    cliente_thread.start()
+    conexao, endereco = servidor.accept()
+    threading.Thread(target=handle_client, args=(conexao, endereco)).start()
